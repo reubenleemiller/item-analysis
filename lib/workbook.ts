@@ -218,31 +218,31 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   const labels = labelQuestions(questions);
   const partA = questions.filter((question) => question.part === "A");
   const partB = questions.filter((question) => question.part === "B");
-  const partRange = (part: Part) => {
-    const indexes = questions.map((question, index) => (question.part === part ? index : -1)).filter((index) => index >= 0);
-    if (!indexes.length) return null;
-    return `${columnLetter(START_QUESTION_COLUMN + indexes[0])}13:${columnLetter(START_QUESTION_COLUMN + indexes[indexes.length - 1])}13`;
-  };
+  const questionColumns = questions.map((_, index) => columnLetter(START_QUESTION_COLUMN + index));
+  const partMaximumFormula = (part: Part) => questionColumns
+    .map((column) => `IF(LEFT(${column}$12,2)="${part}-",${column}$13,0)`)
+    .join("+");
+  const partMeanFormula = (part: Part) => questionColumns
+    .map((column) => `IF(LEFT(${column}$12,2)="${part}-",SUM(${column}${FIRST_STUDENT_ROW}:${column}${lastStudentRow}),0)`)
+    .join("+");
 
   sheet.getCell("A2").value = payload.examTitle.trim() || "Item Analysis";
   sheet.getCell("A6").value = partA.length ? "Part A" : "";
   sheet.getCell("A7").value = partB.length ? "Part B" : "";
   for (const row of [6, 7]) {
     const part = row === 6 ? "A" : "B";
-    const range = partRange(part);
-    if (!range) {
+    if (!(part === "A" ? partA : partB).length) {
       for (let column = 2; column <= 7; column += 1) clearCell(sheet.getCell(row, column));
       continue;
     }
     const maximumCell = sheet.getCell(row, 2);
     clearCell(maximumCell);
     maximumCell.style = clone(sectionMaximumInputStyles[row - 6]);
-    assignFormula(sheet.getCell(row, 3), `COUNT($A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow})`);
-    const [sectionStartColumn, sectionEndColumn] = range.split(":").map((reference) => reference.replace("13", ""));
-    const sectionScoreRange = `${sectionStartColumn}${FIRST_STUDENT_ROW}:${sectionEndColumn}${lastStudentRow}`;
-    assignFormula(sheet.getCell(row, 4), `IF(COUNT(${sectionScoreRange})=0,"",AVERAGE(${sectionScoreRange}))`);
-    assignFormula(sheet.getCell(row, 5), `IF(OR(C${row}=0,B${row}=0),"",D${row}/B${row})`);
-    assignFormula(sheet.getCell(row, 6), `SUM(${range})`);
+    assignFormula(maximumCell, partMaximumFormula(part));
+    assignFormula(sheet.getCell(row, 3), `COUNT(${totalColumn}${FIRST_STUDENT_ROW}:${totalColumn}${lastStudentRow})`);
+    assignFormula(sheet.getCell(row, 4), `IF(C${row}=0,"",(${partMeanFormula(part)})/C${row})`);
+    assignFormula(sheet.getCell(row, 5), `IF(C${row}=0,"",IF(B${row}>0,D${row}/B${row},AVERAGE(${percentColumn}${FIRST_STUDENT_ROW}:${percentColumn}${lastStudentRow})))`);
+    assignFormula(sheet.getCell(row, 6), partMaximumFormula(part));
     assignFormula(sheet.getCell(row, 7), `IF(F${row}=B${row},"Matches","Review maxima")`);
   }
   assignFormula(sheet.getCell("B9"), `COUNTIF(${firstQuestion}13:${lastQuestion}13,">0")`);
@@ -287,6 +287,7 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
     for (let column = START_QUESTION_COLUMN; column <= lastQuestionColumn; column += 1) {
       const letter = columnLetter(column);
       sheet.getCell(row, column).value = null;
+      sheet.getCell(row, column).numFmt = "0.##";
       sheet.getCell(row, column).dataValidation = {
         type: "custom",
         allowBlank: true,
