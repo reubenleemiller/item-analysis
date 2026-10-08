@@ -122,9 +122,10 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   if (!questions.length) throw new Error("Add at least one question with a positive maximum score.");
   if (questions.length > 150) throw new Error("This template supports up to 150 questions per export.");
   const parts = [...new Set(questions.map((question) => question.part))];
-  const includePartTotals = payload.options?.includePartTotals ?? true;
-  const calculateCorrelationByPart = payload.options?.calculateCorrelationByPart ?? false;
-  const calculateStatisticsByPart = payload.options?.calculateStatisticsByPart ?? false;
+  const canSeparateByPart = parts.length > 1;
+  const includePartTotals = canSeparateByPart && (payload.options?.includePartTotals ?? false);
+  const calculateCorrelationByPart = canSeparateByPart && (payload.options?.calculateCorrelationByPart ?? false);
+  const calculateStatisticsByPart = canSeparateByPart && (payload.options?.calculateStatisticsByPart ?? false);
 
   const students = payload.students
     .filter((student) => student.number.trim() || student.name.trim())

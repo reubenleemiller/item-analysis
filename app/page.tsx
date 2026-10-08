@@ -115,7 +115,7 @@ export default function Home() {
   const [bulkPart, setBulkPart] = useState("A");
   const [bulkType, setBulkType] = useState<ResponseType>("MC");
   const [bulkMaxPoints, setBulkMaxPoints] = useState(1);
-  const [includePartTotals, setIncludePartTotals] = useState(true);
+  const [includePartTotals, setIncludePartTotals] = useState(false);
   const [calculateCorrelationByPart, setCalculateCorrelationByPart] = useState(false);
   const [calculateStatisticsByPart, setCalculateStatisticsByPart] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
@@ -128,6 +128,7 @@ export default function Home() {
 
   const totalPoints = useMemo(() => questions.reduce((total, question) => total + (Number(question.maxPoints) || 0), 0), [questions]);
   const activeQuestions = questions.filter((question) => parts.includes(question.part) && enabledTypes.includes(question.responseType));
+  const supportsPartScopedAnalysis = parts.length > 1;
 
   const updateQuestion = (id: string, updates: Partial<Question>) => setQuestions((current) => current.map((question) => question.id === id ? { ...question, ...updates } : question));
   const removeQuestion = (id: string) => {
@@ -221,7 +222,7 @@ export default function Home() {
       const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ examTitle, questions: exportQuestions, students, options: { includePartTotals, calculateCorrelationByPart, calculateStatisticsByPart } }),
+        body: JSON.stringify({ examTitle, questions: exportQuestions, students, options: { includePartTotals: supportsPartScopedAnalysis && includePartTotals, calculateCorrelationByPart: supportsPartScopedAnalysis && calculateCorrelationByPart, calculateStatisticsByPart: supportsPartScopedAnalysis && calculateStatisticsByPart } }),
       });
       if (!response.ok) throw new Error((await response.json()).error || "The workbook could not be built.");
       const workbook = await response.blob();
@@ -278,7 +279,7 @@ export default function Home() {
         <section className="panel basics">
           <label className="field wide"><span>Exam title</span><input value={examTitle} onChange={(event) => setExamTitle(event.target.value)} placeholder="e.g. Unit 2 Assessment" /></label>
           <div className="control-group"><span>Response types</span><div className="toggles">{types.map((type) => <button key={type} className={enabledTypes.includes(type) ? "toggle selected" : "toggle"} onClick={() => toggleType(type)} type="button">{type}</button>)}</div></div>
-          <div className="control-group export-options"><span>Workbook and calculation options</span><label><input type="checkbox" checked={includePartTotals} onChange={(event) => setIncludePartTotals(event.target.checked)} /> Add separate part-total columns</label><label><input type="checkbox" checked={calculateCorrelationByPart} onChange={(event) => setCalculateCorrelationByPart(event.target.checked)} /> Calculate item correlation per part</label><label><input type="checkbox" checked={calculateStatisticsByPart} onChange={(event) => setCalculateStatisticsByPart(event.target.checked)} /> Calculate item statistics per part</label></div>
+          <div className="control-group export-options"><span>Workbook and calculation options</span><label><input type="checkbox" checked={includePartTotals} onChange={(event) => setIncludePartTotals(event.target.checked)} disabled={!supportsPartScopedAnalysis} /> Add separate part-total columns</label><label><input type="checkbox" checked={calculateCorrelationByPart} onChange={(event) => setCalculateCorrelationByPart(event.target.checked)} disabled={!supportsPartScopedAnalysis} /> Calculate item correlation per part</label><label><input type="checkbox" checked={calculateStatisticsByPart} onChange={(event) => setCalculateStatisticsByPart(event.target.checked)} disabled={!supportsPartScopedAnalysis} /> Calculate item statistics per part</label>{!supportsPartScopedAnalysis ? <small className="option-note">Add a second part to calculate or display results separately by part.</small> : null}</div>
           <div className="part-manager"><span>Test parts</span><div className="part-chips">{parts.map((part) => <span className="part-chip" key={part}>{part}<button type="button" onClick={() => removePart(part)} disabled={parts.length === 1} aria-label={`Remove ${part}`}>×</button></span>)}</div><div className="add-part"><input value={newPart} onChange={(event) => setNewPart(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addPart(); } }} placeholder="e.g. Part C" aria-label="New part name" /><button type="button" onClick={addPart}>Add part</button></div></div>
         </section>
 
