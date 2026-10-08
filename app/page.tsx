@@ -116,8 +116,8 @@ export default function Home() {
   const [bulkType, setBulkType] = useState<ResponseType>("MC");
   const [bulkMaxPoints, setBulkMaxPoints] = useState(1);
   const [includePartTotals, setIncludePartTotals] = useState(true);
-  const [includeItemCorrelation, setIncludeItemCorrelation] = useState(true);
-  const [includeItemStatistics, setIncludeItemStatistics] = useState(true);
+  const [calculateCorrelationByPart, setCalculateCorrelationByPart] = useState(false);
+  const [calculateStatisticsByPart, setCalculateStatisticsByPart] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [csvName, setCsvName] = useState("");
   const [status, setStatus] = useState("");
@@ -221,7 +221,7 @@ export default function Home() {
       const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ examTitle, questions: exportQuestions, students, options: { includePartTotals, includeItemCorrelation, includeItemStatistics } }),
+        body: JSON.stringify({ examTitle, questions: exportQuestions, students, options: { includePartTotals, calculateCorrelationByPart, calculateStatisticsByPart } }),
       });
       if (!response.ok) throw new Error((await response.json()).error || "The workbook could not be built.");
       const workbook = await response.blob();
@@ -278,7 +278,7 @@ export default function Home() {
         <section className="panel basics">
           <label className="field wide"><span>Exam title</span><input value={examTitle} onChange={(event) => setExamTitle(event.target.value)} placeholder="e.g. Unit 2 Assessment" /></label>
           <div className="control-group"><span>Response types</span><div className="toggles">{types.map((type) => <button key={type} className={enabledTypes.includes(type) ? "toggle selected" : "toggle"} onClick={() => toggleType(type)} type="button">{type}</button>)}</div></div>
-          <div className="control-group export-options"><span>Include in workbook</span><label><input type="checkbox" checked={includePartTotals} onChange={(event) => setIncludePartTotals(event.target.checked)} /> Separate part totals</label><label><input type="checkbox" checked={includeItemCorrelation} onChange={(event) => setIncludeItemCorrelation(event.target.checked)} /> Item correlation</label><label><input type="checkbox" checked={includeItemStatistics} onChange={(event) => setIncludeItemStatistics(event.target.checked)} /> Item statistics</label></div>
+          <div className="control-group export-options"><span>Workbook and calculation options</span><label><input type="checkbox" checked={includePartTotals} onChange={(event) => setIncludePartTotals(event.target.checked)} /> Add separate part-total columns</label><label><input type="checkbox" checked={calculateCorrelationByPart} onChange={(event) => setCalculateCorrelationByPart(event.target.checked)} /> Calculate item correlation per part</label><label><input type="checkbox" checked={calculateStatisticsByPart} onChange={(event) => setCalculateStatisticsByPart(event.target.checked)} /> Calculate item statistics per part</label></div>
           <div className="part-manager"><span>Test parts</span><div className="part-chips">{parts.map((part) => <span className="part-chip" key={part}>{part}<button type="button" onClick={() => removePart(part)} disabled={parts.length === 1} aria-label={`Remove ${part}`}>×</button></span>)}</div><div className="add-part"><input value={newPart} onChange={(event) => setNewPart(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addPart(); } }} placeholder="e.g. Part C" aria-label="New part name" /><button type="button" onClick={addPart}>Add part</button></div></div>
         </section>
 
