@@ -2,9 +2,8 @@
 
 import { ChangeEvent, useMemo, useState } from "react";
 
-type Part = "A" | "B";
 type ResponseType = "MC" | "NR" | "WR";
-type Question = { id: string; part: Part; responseType: ResponseType; maxPoints: number; label: string };
+type Question = { id: string; part: string; responseType: ResponseType; maxPoints: number; label: string };
 type Student = { number: string; name: string };
 
 declare global {
@@ -25,7 +24,7 @@ declare global {
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 const types: ResponseType[] = ["MC", "NR", "WR"];
-const starterQuestion = (id = "question-1"): Question => ({ id, part: "A", responseType: "MC", maxPoints: 1, label: "" });
+const starterQuestion = (id = "question-1", part = "A", responseType: ResponseType = "MC"): Question => ({ id, part, responseType, maxPoints: 1, label: "" });
 
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -107,9 +106,18 @@ async function getAccessToken(prompt = "") {
 
 export default function Home() {
   const [examTitle, setExamTitle] = useState("Item Analysis");
-  const [enabledParts, setEnabledParts] = useState<Part[]>(["A", "B"]);
+  const [parts, setParts] = useState<string[]>(["A", "B"]);
   const [enabledTypes, setEnabledTypes] = useState<ResponseType[]>(types);
   const [questions, setQuestions] = useState<Question[]>([starterQuestion()]);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
+  const [newPart, setNewPart] = useState("");
+  const [bulkCount, setBulkCount] = useState(5);
+  const [bulkPart, setBulkPart] = useState("A");
+  const [bulkType, setBulkType] = useState<ResponseType>("MC");
+  const [bulkMaxPoints, setBulkMaxPoints] = useState(1);
+  const [includePartTotals, setIncludePartTotals] = useState(true);
+  const [includeItemCorrelation, setIncludeItemCorrelation] = useState(true);
+  const [includeItemStatistics, setIncludeItemStatistics] = useState(true);
   const [students, setStudents] = useState<Student[]>([]);
   const [csvName, setCsvName] = useState("");
   const [status, setStatus] = useState("");
@@ -119,20 +127,34 @@ export default function Home() {
   const [createdSheetUrl, setCreatedSheetUrl] = useState("");
 
   const totalPoints = useMemo(() => questions.reduce((total, question) => total + (Number(question.maxPoints) || 0), 0), [questions]);
-  const activeQuestions = questions.filter((question) => enabledParts.includes(question.part) && enabledTypes.includes(question.responseType));
+  const activeQuestions = questions.filter((question) => parts.includes(question.part) && enabledTypes.includes(question.responseType));
 
   const updateQuestion = (id: string, updates: Partial<Question>) => setQuestions((current) => current.map((question) => question.id === id ? { ...question, ...updates } : question));
-  const removeQuestion = (id: string) => setQuestions((current) => current.filter((question) => question.id !== id));
-  const togglePart = (part: Part) => {
-    setEnabledParts((current) => {
-      if (current.includes(part)) {
-        if (current.length === 1) return current;
-        const fallback = current.find((candidate) => candidate !== part)!;
-        setQuestions((questions) => questions.map((question) => question.part === part ? { ...question, part: fallback } : question));
-        return current.filter((candidate) => candidate !== part);
-      }
-      return [...current, part];
+  const removeQuestion = (id: string) => {
+    setQuestions((current) => current.filter((question) => question.id !== id));
+    setSelectedQuestionIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
     });
+  };
+  const addPart = () => {
+    const normalized = newPart.trim();
+    if (!normalized) return;
+    if (parts.some((part) => part.toLowerCase() === normalized.toLowerCase())) {
+      setStatus(`A part named “${normalized}” already exists.`);
+      return;
+    }
+    setParts((current) => [...current, normalized]);
+    setBulkPart(normalized);
+    setNewPart("");
+  };
+  const removePart = (part: string) => {
+    if (parts.length === 1) return;
+    const fallback = parts.find((candidate) => candidate !== part)!;
+    setQuestions((current) => current.map((question) => question.part === part ? { ...question, part: fallback } : question));
+    setParts((current) => current.filter((candidate) => candidate !== part));
+    if (bulkPart === part) setBulkPart(fallback);
   };
   const toggleType = (type: ResponseType) => {
     setEnabledTypes((current) => {
@@ -144,6 +166,27 @@ export default function Home() {
       }
       return [...current, type];
     });
+  };
+  const addQuestions = (count = 1, part = parts[0], responseType = enabledTypes[0], maxPoints = 1) => {
+    const safeCount = Math.min(150 - questions.length, Math.max(1, Math.floor(Number(count) || 1)));
+    if (safeCount < 1) {
+      setStatus("A workbook can include up to 150 questions.");
+      return;
+    }
+    const stamp = Date.now();
+    setQuestions((current) => [...current, ...Array.from({ length: safeCount }, (_, index) => ({ ...starterQuestion(`question-${stamp}-${index}`, part, responseType), maxPoints: Number(maxPoints) || 1 }))]);
+    if (safeCount < count) setStatus("Added the remaining questions up to the 150-question workbook limit.");
+  };
+  const toggleQuestionSelection = (id: string) => setSelectedQuestionIds((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAllQuestions = () => setSelectedQuestionIds((current) => current.size === questions.length ? new Set() : new Set(questions.map((question) => question.id)));
+  const deleteSelectedQuestions = () => {
+    if (!selectedQuestionIds.size) return;
+    setQuestions((current) => current.filter((question) => !selectedQuestionIds.has(question.id)));
+    setSelectedQuestionIds(new Set());
   };
   const importRoster = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -178,7 +221,7 @@ export default function Home() {
       const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ examTitle, questions: exportQuestions, students }),
+        body: JSON.stringify({ examTitle, questions: exportQuestions, students, options: { includePartTotals, includeItemCorrelation, includeItemStatistics } }),
       });
       if (!response.ok) throw new Error((await response.json()).error || "The workbook could not be built.");
       const workbook = await response.blob();
@@ -233,23 +276,27 @@ export default function Home() {
         </section>
 
         <section className="panel basics">
-        <label className="field wide"><span>Exam title</span><input value={examTitle} onChange={(event) => setExamTitle(event.target.value)} placeholder="e.g. Unit 2 Assessment" /></label>
-        <div className="control-group"><span>Test sections</span><div className="toggles">{(["A", "B"] as Part[]).map((part) => <button key={part} className={enabledParts.includes(part) ? "toggle selected" : "toggle"} onClick={() => togglePart(part)} type="button">Part {part}</button>)}</div></div>
-        <div className="control-group"><span>Response types</span><div className="toggles">{types.map((type) => <button key={type} className={enabledTypes.includes(type) ? "toggle selected" : "toggle"} onClick={() => toggleType(type)} type="button">{type}</button>)}</div></div>
+          <label className="field wide"><span>Exam title</span><input value={examTitle} onChange={(event) => setExamTitle(event.target.value)} placeholder="e.g. Unit 2 Assessment" /></label>
+          <div className="control-group"><span>Response types</span><div className="toggles">{types.map((type) => <button key={type} className={enabledTypes.includes(type) ? "toggle selected" : "toggle"} onClick={() => toggleType(type)} type="button">{type}</button>)}</div></div>
+          <div className="control-group export-options"><span>Include in workbook</span><label><input type="checkbox" checked={includePartTotals} onChange={(event) => setIncludePartTotals(event.target.checked)} /> Separate part totals</label><label><input type="checkbox" checked={includeItemCorrelation} onChange={(event) => setIncludeItemCorrelation(event.target.checked)} /> Item correlation</label><label><input type="checkbox" checked={includeItemStatistics} onChange={(event) => setIncludeItemStatistics(event.target.checked)} /> Item statistics</label></div>
+          <div className="part-manager"><span>Test parts</span><div className="part-chips">{parts.map((part) => <span className="part-chip" key={part}>{part}<button type="button" onClick={() => removePart(part)} disabled={parts.length === 1} aria-label={`Remove ${part}`}>×</button></span>)}</div><div className="add-part"><input value={newPart} onChange={(event) => setNewPart(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addPart(); } }} placeholder="e.g. Part C" aria-label="New part name" /><button type="button" onClick={addPart}>Add part</button></div></div>
         </section>
 
         <section className="panel">
         <div className="section-heading"><div><p className="eyebrow">1. Answer key setup</p><h2>Questions and maximum points</h2></div><div className="summary">{activeQuestions.length} items · {totalPoints} points</div></div>
-        <p className="hint">Use the Part and response-type toggles to match the test. Labels are optional; blank labels automatically become A-MC1, B-WR2, and so on.</p>
-        <div className="question-grid question-head"><span>Part</span><span>Type</span><span>Max points</span><span>Question label</span><span /></div>
+        <p className="hint">Add as many named parts as your test needs. Labels are optional; blank labels automatically become Part A-MC1, Part C-WR2, and so on.</p>
+        <div className="bulk-actions" aria-label="Bulk question actions"><div className="bulk-fields"><label>Questions<input type="number" min="1" max="150" value={bulkCount} onChange={(event) => setBulkCount(Number(event.target.value))} /></label><label>Part<select value={bulkPart} onChange={(event) => setBulkPart(event.target.value)}>{parts.map((part) => <option key={part} value={part}>{part}</option>)}</select></label><label>Type<select value={bulkType} onChange={(event) => setBulkType(event.target.value as ResponseType)}>{enabledTypes.map((type) => <option key={type}>{type}</option>)}</select></label><label>Max points<input type="number" min="0.01" step="0.25" value={bulkMaxPoints} onChange={(event) => setBulkMaxPoints(Number(event.target.value))} /></label></div><button className="add-button" type="button" onClick={() => addQuestions(bulkCount, bulkPart, bulkType, bulkMaxPoints)}>+ Add questions</button></div>
+        <div className="selection-actions"><label><input type="checkbox" checked={questions.length > 0 && selectedQuestionIds.size === questions.length} onChange={toggleAllQuestions} /> Select all</label><button type="button" className="delete-selected" onClick={deleteSelectedQuestions} disabled={!selectedQuestionIds.size}>Delete selected{selectedQuestionIds.size ? ` (${selectedQuestionIds.size})` : ""}</button></div>
+        <div className="question-grid question-head"><span>Select</span><span>Part</span><span>Type</span><span>Max points</span><span>Question label</span><span /></div>
         {questions.map((question) => <div className="question-grid" key={question.id}>
-          <select value={question.part} onChange={(event) => updateQuestion(question.id, { part: event.target.value as Part })}>{enabledParts.map((part) => <option key={part}>{part}</option>)}</select>
+          <label className="question-select"><input type="checkbox" checked={selectedQuestionIds.has(question.id)} onChange={() => toggleQuestionSelection(question.id)} aria-label={`Select ${question.label || "question"}`} /></label>
+          <select value={question.part} onChange={(event) => updateQuestion(question.id, { part: event.target.value })}>{parts.map((part) => <option key={part}>{part}</option>)}</select>
           <select value={question.responseType} onChange={(event) => updateQuestion(question.id, { responseType: event.target.value as ResponseType })}>{enabledTypes.map((type) => <option key={type}>{type}</option>)}</select>
           <input type="number" min="0.01" step="0.25" value={question.maxPoints} onChange={(event) => updateQuestion(question.id, { maxPoints: Number(event.target.value) })} />
           <input value={question.label} onChange={(event) => updateQuestion(question.id, { label: event.target.value })} placeholder="Optional, e.g. Q1" />
           <button className="icon-button" type="button" onClick={() => removeQuestion(question.id)} aria-label="Remove question">×</button>
         </div>)}
-        <button className="add-button" type="button" onClick={() => setQuestions((current) => [...current, { ...starterQuestion(`question-${Date.now()}`), part: enabledParts[0], responseType: enabledTypes[0] }])}>+ Add question</button>
+        <button className="add-button single-add" type="button" onClick={() => addQuestions(1)}>+ Add one question</button>
         </section>
 
         <section className="panel roster">

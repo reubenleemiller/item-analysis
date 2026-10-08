@@ -1,11 +1,10 @@
 import ExcelJS from "exceljs";
 import path from "node:path";
 
-export type Part = "A" | "B";
 export type ResponseType = "MC" | "NR" | "WR";
 
 export type Question = {
-  part: Part;
+  part: string;
   responseType: ResponseType;
   maxPoints: number;
   label?: string;
@@ -17,6 +16,11 @@ export type ExportPayload = {
   examTitle: string;
   questions: Question[];
   students: Student[];
+  options?: {
+    includePartTotals?: boolean;
+    includeItemCorrelation?: boolean;
+    includeItemStatistics?: boolean;
+  };
 };
 
 const START_QUESTION_COLUMN = 3; // C
@@ -34,32 +38,32 @@ const SECTION_SUMMARY_HEADERS = [
   "Item maxima",
   "Maximum check",
 ];
-const STATIC_SHEET_TITLES: ReadonlyArray<readonly [string, string]> = [
-  ["A1", "Item analysis with partial credit"],
-  ["A3", "Enter each section maximum in column B, then each item maximum in row 13. Enter earned points in the score-entry rows. Decimals are allowed. Blank = ungraded; 0 = no credit."],
-  ["A8", "Section totals update from the question maxima below."],
-  ["A9", "Configured items"],
-  ["C9", "Total maximum"],
-  ["E9", "Complete students"],
-  ["A10", "Question setup"],
-  ["A12", "Question analysis"],
-  ["A13", "Maximum points (input)"],
-  ["A14", "Response type"],
-  ["A15", "Scored students"],
-  ["A16", "Mean points"],
-  ["A17", "Facility (mean / max) - Percent Correct"],
-  ["A18", "Full-credit count"],
-  ["A19", "Partial-credit count"],
-  ["A20", "Zero-credit count"],
-  ["A21", "Ungraded students"],
-  ["A22", "Score SD (sample)"],
-  ["A23", "Item–rest correlation - Percent Upper Group Correct"],
-  ["A24", "Invalid entries"],
-  ["A25", "Status"],
-  ["A26", "Conclusion"],
-  ["A28", "Score entry (inputs)"],
-  ["A29", "Student number"],
-  ["B29", "Student name"],
+const STATIC_SHEET_TITLES: ReadonlyArray<readonly [number, number, string]> = [
+  [1, 1, "Item analysis with partial credit"],
+  [3, 1, "Enter each section maximum in column B, then each item maximum in row 13. Enter earned points in the score-entry rows. Decimals are allowed. Blank = ungraded; 0 = no credit."],
+  [8, 1, "Section totals update from the question maxima below."],
+  [9, 1, "Configured items"],
+  [9, 3, "Total maximum"],
+  [9, 5, "Complete students"],
+  [10, 1, "Question setup"],
+  [12, 1, "Question analysis"],
+  [13, 1, "Maximum points (input)"],
+  [14, 1, "Response type"],
+  [15, 1, "Scored students"],
+  [16, 1, "Mean points"],
+  [17, 1, "Facility (mean / max) - Percent Correct"],
+  [18, 1, "Full-credit count"],
+  [19, 1, "Partial-credit count"],
+  [20, 1, "Zero-credit count"],
+  [21, 1, "Ungraded students"],
+  [22, 1, "Score SD (sample)"],
+  [23, 1, "Item–rest correlation - Percent Upper Group Correct"],
+  [24, 1, "Invalid entries"],
+  [25, 1, "Status"],
+  [26, 1, "Conclusion"],
+  [28, 1, "Score entry (inputs)"],
+  [29, 1, "Student number"],
+  [29, 2, "Student name"],
 ];
 
 function columnLetter(column: number) {
@@ -113,10 +117,14 @@ function addSectionBorder(sheet: ExcelJS.Worksheet, startRow: number, endRow: nu
 export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   const questions = payload.questions
     .filter((question) => Number.isFinite(question.maxPoints) && question.maxPoints > 0)
-    .sort((a, b) => a.part.localeCompare(b.part));
+    .map((question) => ({ ...question, part: String(question.part || "").trim() || "Part 1" }));
 
   if (!questions.length) throw new Error("Add at least one question with a positive maximum score.");
   if (questions.length > 150) throw new Error("This template supports up to 150 questions per export.");
+  const parts = [...new Set(questions.map((question) => question.part))];
+  const includePartTotals = payload.options?.includePartTotals ?? true;
+  const includeItemCorrelation = payload.options?.includeItemCorrelation ?? true;
+  const includeItemStatistics = payload.options?.includeItemStatistics ?? true;
 
   const students = payload.students
     .filter((student) => student.number.trim() || student.name.trim())
@@ -142,6 +150,29 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   const itemWidth = sheet.getColumn(START_QUESTION_COLUMN).width;
   const helperWidths = [0, 1, 2].map((offset) => sheet.getColumn(TEMPLATE_HELPER_COLUMN + offset).width);
 
+  // The reference workbook reserves two part-summary rows. Add rows only when
+  // needed, so every distinct part selected in the builder has its own summary.
+  const extraPartRows = Math.max(0, parts.length - 2);
+  if (extraPartRows) sheet.spliceRows(8, 0, ...Array.from({ length: extraPartRows }, () => []));
+  const rowOf = (baseRow: number) => baseRow >= 8 ? baseRow + extraPartRows : baseRow;
+  const firstStudentRow = rowOf(FIRST_STUDENT_ROW);
+  const row12 = rowOf(12);
+  const row13 = rowOf(13);
+  const row14 = rowOf(14);
+  const row15 = rowOf(15);
+  const row16 = rowOf(16);
+  const row17 = rowOf(17);
+  const row18 = rowOf(18);
+  const row19 = rowOf(19);
+  const row20 = rowOf(20);
+  const row21 = rowOf(21);
+  const row22 = rowOf(22);
+  const row23 = rowOf(23);
+  const row24 = rowOf(24);
+  const row25 = rowOf(25);
+  const row26 = rowOf(26);
+  const row29 = rowOf(29);
+
   // Remove the fixed 36-question area and its three trailing total columns. The replacement is sized to the test.
   sheet.spliceColumns(START_QUESTION_COLUMN, TEMPLATE_QUESTION_COUNT + 3);
   const questionCount = questions.length;
@@ -149,31 +180,38 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   const lastQuestionColumn = START_QUESTION_COLUMN + questionCount - 1;
   const lastQuestion = columnLetter(lastQuestionColumn);
   const totalColumn = columnLetter(lastQuestionColumn + 1);
-  const percentColumn = columnLetter(lastQuestionColumn + 2);
-  const invalidColumn = columnLetter(lastQuestionColumn + 3);
+  const partTotalColumns = includePartTotals
+    ? parts.map((_, index) => columnLetter(lastQuestionColumn + 2 + index))
+    : [];
+  const percentColumn = columnLetter(lastQuestionColumn + 2 + partTotalColumns.length);
+  const invalidColumn = columnLetter(lastQuestionColumn + 3 + partTotalColumns.length);
+  const finalColumn = lastQuestionColumn + 3 + partTotalColumns.length;
 
   for (let column = START_QUESTION_COLUMN; column <= lastQuestionColumn; column += 1) {
     sheet.getColumn(column).width = itemWidth;
-    for (let row = 1; row <= itemColumnStyles.length; row += 1) {
-      sheet.getCell(row, column).style = clone(itemColumnStyles[row - 1]);
+    for (let baseRow = 1; baseRow <= itemColumnStyles.length; baseRow += 1) {
+      sheet.getCell(rowOf(baseRow), column).style = clone(itemColumnStyles[baseRow - 1]);
     }
   }
-  for (let offset = 0; offset < 3; offset += 1) {
+  const helperStyleIndexes = [0, ...partTotalColumns.map(() => 0), 1, 2];
+  for (let offset = 0; offset < helperStyleIndexes.length; offset += 1) {
     const column = lastQuestionColumn + 1 + offset;
-    sheet.getColumn(column).width = helperWidths[offset];
-    for (let row = 1; row <= helperColumnStyles[offset].length; row += 1) {
-      sheet.getCell(row, column).style = clone(helperColumnStyles[offset][row - 1]);
+    const styleIndex = helperStyleIndexes[offset];
+    sheet.getColumn(column).width = helperWidths[styleIndex];
+    for (let baseRow = 1; baseRow <= helperColumnStyles[styleIndex].length; baseRow += 1) {
+      sheet.getCell(rowOf(baseRow), column).style = clone(helperColumnStyles[styleIndex][baseRow - 1]);
     }
   }
   for (let rowOffset = 0; rowOffset < staticSummaryStyles.length; rowOffset += 1) {
     for (let columnOffset = 0; columnOffset < staticSummaryStyles[rowOffset].length; columnOffset += 1) {
-      sheet.getCell(rowOffset + 5, columnOffset + 1).style = clone(staticSummaryStyles[rowOffset][columnOffset]);
+      const baseRow = rowOffset + 5;
+      sheet.getCell(rowOf(baseRow), columnOffset + 1).style = clone(staticSummaryStyles[rowOffset][columnOffset]);
     }
   }
   // The summary and setup panels end at column G. The question/total columns
   // below them must not inherit any of the template's stale panel borders.
   for (let row = 5; row <= 10; row += 1) {
-    for (let column = 8; column <= lastQuestionColumn + 3; column += 1) {
+    for (let column = 8; column <= finalColumn; column += 1) {
       sheet.getCell(row, column).border = {};
     }
   }
@@ -185,103 +223,104 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   }
   STATIC_COLUMN_WIDTHS.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
   sheet.getRow(5).height = 18;
-  for (const address of ["A3", "A17", "A23"]) {
-    const cell = sheet.getCell(address);
+  for (const baseRow of [3, 17, 23]) {
+    const cell = sheet.getCell(rowOf(baseRow), 1);
     cell.alignment = { ...cell.alignment, vertical: "top", wrapText: false };
   }
-  for (const [address, title] of STATIC_SHEET_TITLES) {
-    sheet.getCell(address).value = title;
+  for (const [baseRow, column, title] of STATIC_SHEET_TITLES) {
+    sheet.getCell(rowOf(baseRow), column).value = title;
   }
 
   if (!students.length) throw new Error("Import at least one student before exporting.");
-  const scoreRowStyles = Array.from({ length: lastQuestionColumn + 3 }, (_, index) =>
-    clone(sheet.getCell(FIRST_STUDENT_ROW + TEMPLATE_STUDENT_CAPACITY - 1, index + 1).style),
+  const scoreRowStyles = Array.from({ length: finalColumn }, (_, index) =>
+    clone(sheet.getCell(firstStudentRow + TEMPLATE_STUDENT_CAPACITY - 1, index + 1).style),
   );
-  const scoreRowHeight = sheet.getRow(FIRST_STUDENT_ROW + TEMPLATE_STUDENT_CAPACITY - 1).height;
+  const scoreRowHeight = sheet.getRow(firstStudentRow + TEMPLATE_STUDENT_CAPACITY - 1).height;
   const requiredRows = students.length;
   const rowDifference = requiredRows - TEMPLATE_STUDENT_CAPACITY;
   if (rowDifference > 0) {
-    sheet.spliceRows(FIRST_STUDENT_ROW + TEMPLATE_STUDENT_CAPACITY, 0, ...Array.from({ length: rowDifference }, () => []));
+    sheet.spliceRows(firstStudentRow + TEMPLATE_STUDENT_CAPACITY, 0, ...Array.from({ length: rowDifference }, () => []));
   } else if (rowDifference < 0) {
-    sheet.spliceRows(FIRST_STUDENT_ROW + requiredRows, -rowDifference);
+    sheet.spliceRows(firstStudentRow + requiredRows, -rowDifference);
   }
-  const lastStudentRow = FIRST_STUDENT_ROW + requiredRows - 1;
+  const lastStudentRow = firstStudentRow + requiredRows - 1;
 
   // Restore score-entry row styles after resizing the roster area of the fixed template.
-  for (let row = FIRST_STUDENT_ROW; row <= lastStudentRow; row += 1) {
+  for (let row = firstStudentRow; row <= lastStudentRow; row += 1) {
     sheet.getRow(row).height = scoreRowHeight;
-    for (let column = 1; column <= lastQuestionColumn + 3; column += 1) {
+    for (let column = 1; column <= finalColumn; column += 1) {
       sheet.getCell(row, column).style = clone(scoreRowStyles[column - 1]);
     }
   }
 
   const labels = labelQuestions(questions);
-  const partA = questions.filter((question) => question.part === "A");
-  const partB = questions.filter((question) => question.part === "B");
   const questionColumns = questions.map((_, index) => columnLetter(START_QUESTION_COLUMN + index));
-  const partMaximumFormula = (part: Part) => questionColumns
-    .map((column) => `IF(LEFT(${column}$12,2)="${part}-",${column}$13,0)`)
-    .join("+");
-  const partMeanFormula = (part: Part) => questionColumns
-    .map((column) => `IF(LEFT(${column}$12,2)="${part}-",SUM(${column}${FIRST_STUDENT_ROW}:${column}${lastStudentRow}),0)`)
-    .join("+");
+  const partQuestionColumns = (part: string) => questions
+    .map((question, index) => question.part === part ? questionColumns[index] : "")
+    .filter(Boolean);
+  const partMaximumFormula = (part: string) => partQuestionColumns(part)
+    .map((column) => `${column}$${row13}`)
+    .join("+") || "0";
+  const partMeanFormula = (part: string) => partQuestionColumns(part)
+    .map((column) => `SUM(${column}${firstStudentRow}:${column}${lastStudentRow})`)
+    .join("+") || "0";
 
   sheet.getCell("A2").value = payload.examTitle.trim() || "Item Analysis";
-  sheet.getCell("A6").value = partA.length ? "Part A" : "";
-  sheet.getCell("A7").value = partB.length ? "Part B" : "";
-  for (const row of [6, 7]) {
-    const part = row === 6 ? "A" : "B";
-    if (!(part === "A" ? partA : partB).length) {
-      for (let column = 2; column <= 7; column += 1) clearCell(sheet.getCell(row, column));
-      continue;
+  for (let index = 0; index < parts.length; index += 1) {
+    const row = 6 + index;
+    const part = parts[index];
+    for (let column = 1; column <= 7; column += 1) {
+      sheet.getCell(row, column).style = clone(staticSummaryStyles[Math.min(index + 1, 2)][column - 1]);
     }
+    sheet.getCell(row, 1).value = part;
     const maximumCell = sheet.getCell(row, 2);
     clearCell(maximumCell);
-    maximumCell.style = clone(sectionMaximumInputStyles[row - 6]);
+    maximumCell.style = clone(sectionMaximumInputStyles[Math.min(index, 1)]);
     assignFormula(maximumCell, partMaximumFormula(part));
-    assignFormula(sheet.getCell(row, 3), `COUNT(${totalColumn}${FIRST_STUDENT_ROW}:${totalColumn}${lastStudentRow})`);
+    assignFormula(sheet.getCell(row, 3), `COUNT(${totalColumn}${firstStudentRow}:${totalColumn}${lastStudentRow})`);
     assignFormula(sheet.getCell(row, 4), `IF(C${row}=0,"",(${partMeanFormula(part)})/C${row})`);
-    assignFormula(sheet.getCell(row, 5), `IF(C${row}=0,"",IF(B${row}>0,D${row}/B${row},AVERAGE(${percentColumn}${FIRST_STUDENT_ROW}:${percentColumn}${lastStudentRow})))`);
+    assignFormula(sheet.getCell(row, 5), `IF(C${row}=0,"",IF(B${row}>0,D${row}/B${row},AVERAGE(${percentColumn}${firstStudentRow}:${percentColumn}${lastStudentRow})))`);
     assignFormula(sheet.getCell(row, 6), partMaximumFormula(part));
     assignFormula(sheet.getCell(row, 7), `IF(F${row}=B${row},"Matches","Review maxima")`);
   }
-  assignFormula(sheet.getCell("B9"), `COUNTIF(${firstQuestion}13:${lastQuestion}13,">0")`);
-  assignFormula(sheet.getCell("D9"), `SUM(${firstQuestion}13:${lastQuestion}13)`);
-  assignFormula(sheet.getCell("F9"), `COUNT(${totalColumn}${FIRST_STUDENT_ROW}:${totalColumn}${lastStudentRow})`);
-  assignFormula(sheet.getCell("B10"), `IF(B9=0,"Add question maxima","Ready")`);
+  assignFormula(sheet.getCell(rowOf(9), 2), `COUNTIF(${firstQuestion}${row13}:${lastQuestion}${row13},">0")`);
+  assignFormula(sheet.getCell(rowOf(9), 4), `SUM(${firstQuestion}${row13}:${lastQuestion}${row13})`);
+  assignFormula(sheet.getCell(rowOf(9), 6), `COUNT(${totalColumn}${firstStudentRow}:${totalColumn}${lastStudentRow})`);
+  assignFormula(sheet.getCell(rowOf(10), 2), `IF(B${rowOf(9)}=0,"Add question maxima","Ready")`);
 
   for (let offset = 0; offset < questionCount; offset += 1) {
     const column = START_QUESTION_COLUMN + offset;
     const letter = columnLetter(column);
     const question = questions[offset];
-    sheet.getCell(12, column).value = labels[offset];
-    sheet.getCell(13, column).value = question.maxPoints;
-    sheet.getCell(14, column).value = question.responseType;
-    assignFormula(sheet.getCell(15, column), `IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),"",COUNTIFS(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},">=0",${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<="&${letter}$13,${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<>",$A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(16, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),${letter}$15=0),"",AVERAGEIFS(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},$A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>",${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},">=0",${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<="&${letter}$13))`);
-    assignFormula(sheet.getCell(17, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),${letter}$15=0),"",${letter}16/${letter}$13)`);
-    assignFormula(sheet.getCell(18, column), `IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),"",COUNTIFS(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},${letter}$13,$A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(19, column), `IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),"",COUNTIFS(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},">0",${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<"&${letter}$13,$A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(20, column), `IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),"",COUNTIFS(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},0,${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<>",$A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(21, column), `IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),"",COUNTIF($A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>")-${letter}15)`);
-    assignFormula(sheet.getCell(22, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),${letter}$15<2),"",STDEV(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow}))`);
-    assignFormula(sheet.getCell(23, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0,${letter}$24>0),COUNT(${totalColumn}$${FIRST_STUDENT_ROW}:${totalColumn}$${lastStudentRow})<3),"",IFERROR(CORREL(FILTER(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},ISNUMBER(${totalColumn}$${FIRST_STUDENT_ROW}:${totalColumn}$${lastStudentRow})),FILTER(${totalColumn}$${FIRST_STUDENT_ROW}:${totalColumn}$${lastStudentRow}-${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},ISNUMBER(${totalColumn}$${FIRST_STUDENT_ROW}:${totalColumn}$${lastStudentRow}))),"n.a."))`);
-    assignFormula(sheet.getCell(24, column), `IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0),COUNTA(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow}),COUNTA(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow})-COUNTIFS(${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},">=0",${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<="&${letter}$13,${letter}$${FIRST_STUDENT_ROW}:${letter}$${lastStudentRow},"<>",$A$${FIRST_STUDENT_ROW}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(25, column), `IF(${letter}24>0,"Check scores",IF(OR(NOT(ISNUMBER(${letter}$13)),${letter}$13<=0),"Set maximum",IF(${letter}$15=0,"Enter scores","Ready")))`);
-    sheet.getCell(29, column).value = labels[offset];
+    sheet.getCell(row12, column).value = labels[offset];
+    sheet.getCell(row13, column).value = question.maxPoints;
+    sheet.getCell(row14, column).value = question.responseType;
+    assignFormula(sheet.getCell(row15, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">=0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<="&${letter}$${row13},${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<>",$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
+    assignFormula(sheet.getCell(row16, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),${letter}$${row15}=0),"",AVERAGEIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},$A$${firstStudentRow}:$A$${lastStudentRow},"<>",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">=0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<="&${letter}$${row13}))`);
+    assignFormula(sheet.getCell(row17, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),${letter}$${row15}=0),"",${letter}${row16}/${letter}$${row13})`);
+    assignFormula(sheet.getCell(row18, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},${letter}$${row13},$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
+    assignFormula(sheet.getCell(row19, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<"&${letter}$${row13},$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
+    assignFormula(sheet.getCell(row20, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},0,${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<>",$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
+    assignFormula(sheet.getCell(row21, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIF($A$${firstStudentRow}:$A$${lastStudentRow},"<>")-${letter}${row15})`);
+    assignFormula(sheet.getCell(row22, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),${letter}$${row15}<2),"",STDEV(${letter}$${firstStudentRow}:${letter}$${lastStudentRow}))`);
+    if (includeItemCorrelation) assignFormula(sheet.getCell(row23, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),COUNT(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow})<3),"",IFERROR(CORREL(FILTER(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},ISNUMBER(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow})),FILTER(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow}-${letter}$${firstStudentRow}:${letter}$${lastStudentRow},ISNUMBER(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow}))),"n.a."))`);
+    assignFormula(sheet.getCell(row24, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),COUNTA(${letter}$${firstStudentRow}:${letter}$${lastStudentRow}),COUNTA(${letter}$${firstStudentRow}:${letter}$${lastStudentRow})-COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">=0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<="&${letter}$${row13},${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<>",$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
+    assignFormula(sheet.getCell(row25, column), `IF(${letter}${row24}>0,"Check scores",IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"Set maximum",IF(${letter}${row15}=0,"Enter scores","Ready")))`);
+    sheet.getCell(row29, column).value = labels[offset];
   }
 
-  sheet.getCell(29, lastQuestionColumn + 1).value = "Complete total";
-  sheet.getCell(29, lastQuestionColumn + 2).value = "Percent";
-  sheet.getCell(29, lastQuestionColumn + 3).value = "Invalid scores";
-  [16, 12, 16].forEach((width, offset) => {
+  sheet.getCell(row29, lastQuestionColumn + 1).value = "Complete total";
+  partTotalColumns.forEach((_, index) => { sheet.getCell(row29, lastQuestionColumn + 2 + index).value = `${parts[index]} total`; });
+  sheet.getCell(row29, lastQuestionColumn + 2 + partTotalColumns.length).value = "Percent";
+  sheet.getCell(row29, lastQuestionColumn + 3 + partTotalColumns.length).value = "Invalid scores";
+  [16, ...partTotalColumns.map(() => 16), 12, 16].forEach((width, offset) => {
     const column = lastQuestionColumn + 1 + offset;
     const staticWidth = STATIC_COLUMN_WIDTHS[column - 1] ?? 0;
     sheet.getColumn(column).width = Math.max(width, staticWidth);
   });
 
-  for (let row = FIRST_STUDENT_ROW; row <= lastStudentRow; row += 1) {
-    const student = students[row - FIRST_STUDENT_ROW];
+  for (let row = firstStudentRow; row <= lastStudentRow; row += 1) {
+    const student = students[row - firstStudentRow];
     sheet.getCell(row, 1).value = student?.number ?? "";
     sheet.getCell(row, 2).value = student?.name ?? "";
     for (let column = START_QUESTION_COLUMN; column <= lastQuestionColumn; column += 1) {
@@ -291,21 +330,27 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
       sheet.getCell(row, column).dataValidation = {
         type: "custom",
         allowBlank: true,
-        formulae: [`AND(OR(${letter}${row}="",ISNUMBER(${letter}${row})),${letter}${row}>=0,${letter}${row}<=${letter}$13)`],
+        formulae: [`AND(OR(${letter}${row}="",ISNUMBER(${letter}${row})),${letter}${row}>=0,${letter}${row}<=${letter}$${row13})`],
         showErrorMessage: true,
         errorTitle: "Invalid score",
         error: "Enter a number from 0 to the question maximum, or leave the cell blank.",
       };
     }
     const scoreRange = `${firstQuestion}${row}:${lastQuestion}${row}`;
-    const maximaRange = `$${firstQuestion}$13:$${lastQuestion}$13`;
+    const maximaRange = `$${firstQuestion}$${row13}:$${lastQuestion}$${row13}`;
     assignFormula(sheet.getCell(row, lastQuestionColumn + 1), `IF(OR($A${row}="",COUNT(${scoreRange})<>${questionCount},${invalidColumn}${row}>0),"",SUM(${scoreRange}))`);
-    assignFormula(sheet.getCell(row, lastQuestionColumn + 2), `IF(ISNUMBER(${totalColumn}${row}),${totalColumn}${row}/$D$9,"")`);
-    assignFormula(sheet.getCell(row, lastQuestionColumn + 3), `IF(AND($A${row}="",COUNTA(${scoreRange})=0),"",IF($A${row}="",COUNTA(${scoreRange}),COUNTA(${scoreRange})-SUMPRODUCT(--ISNUMBER(${scoreRange}),--ISNUMBER(${maximaRange}),--(${maximaRange}>0),--(${scoreRange}>=0),--(${scoreRange}<=${maximaRange}))))`);
+    partTotalColumns.forEach((partColumn, index) => {
+      const partScores = partQuestionColumns(parts[index]).map((column) => `${column}${row}`).join(",");
+      assignFormula(sheet.getCell(row, lastQuestionColumn + 2 + index), `IF($A${row}="","",SUM(${partScores}))`);
+    });
+    assignFormula(sheet.getCell(row, lastQuestionColumn + 2 + partTotalColumns.length), `IF(ISNUMBER(${totalColumn}${row}),${totalColumn}${row}/$D$${rowOf(9)},"")`);
+    assignFormula(sheet.getCell(row, lastQuestionColumn + 3 + partTotalColumns.length), `IF(AND($A${row}="",COUNTA(${scoreRange})=0),"",IF($A${row}="",COUNTA(${scoreRange}),COUNTA(${scoreRange})-SUMPRODUCT(--ISNUMBER(${scoreRange}),--ISNUMBER(${maximaRange}),--(${maximaRange}>0),--(${scoreRange}>=0),--(${scoreRange}<=${maximaRange}))))`);
   }
 
-  addSectionBorder(sheet, 12, 26, 1, lastQuestionColumn);
-  addSectionBorder(sheet, 29, lastStudentRow, 1, lastQuestionColumn + 3);
+  for (const baseRow of [15, 16, 17, 18, 19, 20, 21, 22, 24, 25, 26]) sheet.getRow(rowOf(baseRow)).hidden = !includeItemStatistics;
+  sheet.getRow(row23).hidden = !includeItemCorrelation;
+  addSectionBorder(sheet, row12, row26, 1, lastQuestionColumn);
+  addSectionBorder(sheet, row29, lastStudentRow, 1, finalColumn);
 
   // The original workbook contains a source/class-list sheet. This export keeps
   // only the self-contained Item Analysis worksheet used by the app.
