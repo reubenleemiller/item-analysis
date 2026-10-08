@@ -18,8 +18,8 @@ export type ExportPayload = {
   students: Student[];
   options?: {
     includePartTotals?: boolean;
-    includeItemCorrelation?: boolean;
-    includeItemStatistics?: boolean;
+    calculateCorrelationByPart?: boolean;
+    calculateStatisticsByPart?: boolean;
   };
 };
 
@@ -123,8 +123,8 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   if (questions.length > 150) throw new Error("This template supports up to 150 questions per export.");
   const parts = [...new Set(questions.map((question) => question.part))];
   const includePartTotals = payload.options?.includePartTotals ?? true;
-  const includeItemCorrelation = payload.options?.includeItemCorrelation ?? true;
-  const includeItemStatistics = payload.options?.includeItemStatistics ?? true;
+  const calculateCorrelationByPart = payload.options?.calculateCorrelationByPart ?? false;
+  const calculateStatisticsByPart = payload.options?.calculateStatisticsByPart ?? false;
 
   const students = payload.students
     .filter((student) => student.number.trim() || student.name.trim())
@@ -261,9 +261,15 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   const partMaximumFormula = (part: string) => partQuestionColumns(part)
     .map((column) => `${column}$${row13}`)
     .join("+") || "0";
-  const partMeanFormula = (part: string) => partQuestionColumns(part)
-    .map((column) => `SUM(${column}${firstStudentRow}:${column}${lastStudentRow})`)
-    .join("+") || "0";
+  const scoreRange = (column: string) => `${column}${firstStudentRow}:${column}${lastStudentRow}`;
+  const scoreSumFormula = (columns: string[]) => columns.map(scoreRange).join("+") || "0";
+  const completeCohortCondition = (columns: string[]) => [
+    `($A$${firstStudentRow}:$A$${lastStudentRow}<>"")`,
+    ...columns.flatMap((column) => [`ISNUMBER(${scoreRange(column)})`, `(${scoreRange(column)}>=0)`, `(${scoreRange(column)}<=${column}$${row13})`]),
+  ].join("*");
+  const cohortCountFormula = (columns: string[]) => `SUMPRODUCT(--(${completeCohortCondition(columns)}))`;
+  const cohortPointsFormula = (scoreColumns: string[], cohortColumns: string[]) =>
+    `SUMPRODUCT((${scoreSumFormula(scoreColumns)})*--(${completeCohortCondition(cohortColumns)}))`;
 
   sheet.getCell("A2").value = payload.examTitle.trim() || "Item Analysis";
   for (let index = 0; index < parts.length; index += 1) {
@@ -274,11 +280,12 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
     }
     sheet.getCell(row, 1).value = part;
     const maximumCell = sheet.getCell(row, 2);
+    const summaryCohortColumns = calculateStatisticsByPart ? partQuestionColumns(part) : questionColumns;
     clearCell(maximumCell);
     maximumCell.style = clone(sectionMaximumInputStyles[Math.min(index, 1)]);
     assignFormula(maximumCell, partMaximumFormula(part));
-    assignFormula(sheet.getCell(row, 3), `COUNT(${totalColumn}${firstStudentRow}:${totalColumn}${lastStudentRow})`);
-    assignFormula(sheet.getCell(row, 4), `IF(C${row}=0,"",(${partMeanFormula(part)})/C${row})`);
+    assignFormula(sheet.getCell(row, 3), cohortCountFormula(summaryCohortColumns));
+    assignFormula(sheet.getCell(row, 4), `IF(C${row}=0,"",${cohortPointsFormula(partQuestionColumns(part), summaryCohortColumns)}/C${row})`);
     assignFormula(sheet.getCell(row, 5), `IF(C${row}=0,"",IF(B${row}>0,D${row}/B${row},AVERAGE(${percentColumn}${firstStudentRow}:${percentColumn}${lastStudentRow})))`);
     assignFormula(sheet.getCell(row, 6), partMaximumFormula(part));
     assignFormula(sheet.getCell(row, 7), `IF(F${row}=B${row},"Matches","Review maxima")`);
@@ -287,6 +294,9 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
   assignFormula(sheet.getCell(rowOf(9), 4), `SUM(${firstQuestion}${row13}:${lastQuestion}${row13})`);
   assignFormula(sheet.getCell(rowOf(9), 6), `COUNT(${totalColumn}${firstStudentRow}:${totalColumn}${lastStudentRow})`);
   assignFormula(sheet.getCell(rowOf(10), 2), `IF(B${rowOf(9)}=0,"Add question maxima","Ready")`);
+  sheet.getCell(row15, 1).value = calculateStatisticsByPart ? "Scored students (complete part)" : "Scored students (complete test)";
+  sheet.getCell(row21, 1).value = calculateStatisticsByPart ? "Incomplete part students" : "Incomplete test students";
+  sheet.getCell(row23, 1).value = calculateCorrelationByPart ? "Item–rest correlation - within part" : "Item–rest correlation - whole test";
 
   for (let offset = 0; offset < questionCount; offset += 1) {
     const column = START_QUESTION_COLUMN + offset;
@@ -295,15 +305,22 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
     sheet.getCell(row12, column).value = labels[offset];
     sheet.getCell(row13, column).value = question.maxPoints;
     sheet.getCell(row14, column).value = question.responseType;
-    assignFormula(sheet.getCell(row15, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">=0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<="&${letter}$${row13},${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<>",$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(row16, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),${letter}$${row15}=0),"",AVERAGEIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},$A$${firstStudentRow}:$A$${lastStudentRow},"<>",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">=0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<="&${letter}$${row13}))`);
-    assignFormula(sheet.getCell(row17, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),${letter}$${row15}=0),"",${letter}${row16}/${letter}$${row13})`);
-    assignFormula(sheet.getCell(row18, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},${letter}$${row13},$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(row19, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<"&${letter}$${row13},$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(row20, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},0,${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<>",$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
-    assignFormula(sheet.getCell(row21, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),"",COUNTIF($A$${firstStudentRow}:$A$${lastStudentRow},"<>")-${letter}${row15})`);
-    assignFormula(sheet.getCell(row22, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),${letter}$${row15}<2),"",STDEV(${letter}$${firstStudentRow}:${letter}$${lastStudentRow}))`);
-    if (includeItemCorrelation) assignFormula(sheet.getCell(row23, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row24}>0),COUNT(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow})<3),"",IFERROR(CORREL(FILTER(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},ISNUMBER(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow})),FILTER(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow}-${letter}$${firstStudentRow}:${letter}$${lastStudentRow},ISNUMBER(${totalColumn}$${firstStudentRow}:${totalColumn}$${lastStudentRow}))),"n.a."))`);
+    const statisticsColumns = calculateStatisticsByPart ? partQuestionColumns(question.part) : questionColumns;
+    const statisticsCondition = completeCohortCondition(statisticsColumns);
+    const statisticsCount = cohortCountFormula(statisticsColumns);
+    const correlationColumns = calculateCorrelationByPart ? partQuestionColumns(question.part) : questionColumns;
+    const correlationCondition = completeCohortCondition(correlationColumns);
+    const correlationCount = cohortCountFormula(correlationColumns);
+    const correlationTotal = scoreSumFormula(correlationColumns);
+    assignFormula(sheet.getCell(row15, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"",${statisticsCount})`);
+    assignFormula(sheet.getCell(row16, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${letter}$${row15}=0),"",SUMPRODUCT(${scoreRange(letter)}*--(${statisticsCondition}))/${letter}$${row15})`);
+    assignFormula(sheet.getCell(row17, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),${letter}$${row15}=0),"",${letter}${row16}/${letter}$${row13})`);
+    assignFormula(sheet.getCell(row18, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"",SUMPRODUCT(--(${statisticsCondition}),--(${scoreRange(letter)}=${letter}$${row13})))`);
+    assignFormula(sheet.getCell(row19, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"",SUMPRODUCT(--(${statisticsCondition}),--(${scoreRange(letter)}>0),--(${scoreRange(letter)}<${letter}$${row13})))`);
+    assignFormula(sheet.getCell(row20, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"",SUMPRODUCT(--(${statisticsCondition}),--(${scoreRange(letter)}=0)))`);
+    assignFormula(sheet.getCell(row21, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"",COUNTIF($A$${firstStudentRow}:$A$${lastStudentRow},"<>")-${letter}${row15})`);
+    assignFormula(sheet.getCell(row22, column), `IF(OR(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),${letter}$${row15}<2),"",IFERROR(STDEV(FILTER(${scoreRange(letter)},${statisticsCondition})),""))`);
+    assignFormula(sheet.getCell(row23, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0,${correlationCount}<3),"",IFERROR(CORREL(FILTER(${scoreRange(letter)},${correlationCondition}),FILTER(${correlationTotal}-${scoreRange(letter)},${correlationCondition})),"n.a."))`);
     assignFormula(sheet.getCell(row24, column), `IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),COUNTA(${letter}$${firstStudentRow}:${letter}$${lastStudentRow}),COUNTA(${letter}$${firstStudentRow}:${letter}$${lastStudentRow})-COUNTIFS(${letter}$${firstStudentRow}:${letter}$${lastStudentRow},">=0",${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<="&${letter}$${row13},${letter}$${firstStudentRow}:${letter}$${lastStudentRow},"<>",$A$${firstStudentRow}:$A$${lastStudentRow},"<>"))`);
     assignFormula(sheet.getCell(row25, column), `IF(${letter}${row24}>0,"Check scores",IF(OR(NOT(ISNUMBER(${letter}$${row13})),${letter}$${row13}<=0),"Set maximum",IF(${letter}${row15}=0,"Enter scores","Ready")))`);
     sheet.getCell(row29, column).value = labels[offset];
@@ -347,8 +364,6 @@ export async function createItemAnalysisWorkbook(payload: ExportPayload) {
     assignFormula(sheet.getCell(row, lastQuestionColumn + 3 + partTotalColumns.length), `IF(AND($A${row}="",COUNTA(${scoreRange})=0),"",IF($A${row}="",COUNTA(${scoreRange}),COUNTA(${scoreRange})-SUMPRODUCT(--ISNUMBER(${scoreRange}),--ISNUMBER(${maximaRange}),--(${maximaRange}>0),--(${scoreRange}>=0),--(${scoreRange}<=${maximaRange}))))`);
   }
 
-  for (const baseRow of [15, 16, 17, 18, 19, 20, 21, 22, 24, 25, 26]) sheet.getRow(rowOf(baseRow)).hidden = !includeItemStatistics;
-  sheet.getRow(row23).hidden = !includeItemCorrelation;
   addSectionBorder(sheet, row12, row26, 1, lastQuestionColumn);
   addSectionBorder(sheet, row29, lastStudentRow, 1, finalColumn);
 
