@@ -73,7 +73,7 @@ input[type="checkbox"] { width: 16px; min-height: 16px; height: 16px; padding: 0
 .selection-actions { display: flex; align-items: center; justify-content: space-between; margin: 12px 0; }
 .delete-selected { min-height: 34px; border-color: #c45c52; color: #9b3126; }
 .delete-selected:disabled { cursor: not-allowed; opacity: .45; }
-.question-grid { display: grid; grid-template-columns: 26px 94px 94px 120px minmax(170px, 1fr) 36px; gap: 10px; align-items: center; margin-top: 9px; }
+.question-grid { display: grid; grid-template-columns: 52px 94px 94px 120px minmax(170px, 1fr) 36px; gap: 10px; align-items: center; margin-top: 9px; }
 .question-head { color: var(--muted); font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin-top: 0; }
 .question-select { display: grid; place-items: center; }
 .icon-button { width: 36px; height: 36px; border: 0; border-radius: 8px; background: #f3f4f3; color: #697578; font-size: 1.45rem; line-height: 1; }
