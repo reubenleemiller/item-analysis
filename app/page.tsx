@@ -156,6 +156,11 @@ export default function Home() {
     setQuestions((current) => current.map((question) => question.part === part ? { ...question, part: fallback } : question));
     setParts((current) => current.filter((candidate) => candidate !== part));
     if (bulkPart === part) setBulkPart(fallback);
+    if (parts.length === 2) {
+      setIncludePartTotals(false);
+      setCalculateCorrelationByPart(false);
+      setCalculateStatisticsByPart(false);
+    }
   };
   const toggleType = (type: ResponseType) => {
     setEnabledTypes((current) => {
