@@ -44,7 +44,8 @@ h1 { margin-bottom: 12px; font-family: Georgia, serif; font-size: clamp(2.5rem, 
 h2 { margin-bottom: 7px; font-size: 1.13rem; }
 .hero p:last-child, .hint, .create-panel p { color: var(--muted); line-height: 1.5; }
 .panel { margin-top: 18px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 26px; box-shadow: 0 8px 30px rgba(16, 41, 36, .05); }
-.basics { display: grid; grid-template-columns: 1.4fr 1fr 1fr; align-items: end; gap: 22px; }
+.basics { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 22px; }
+.basics > * { min-width: 0; }
 .field, .control-group { display: grid; gap: 9px; font-size: .88rem; font-weight: 700; }
 input, select { width: 100%; min-height: 40px; border: 1px solid #b8c8c4; border-radius: 8px; background: #fff; padding: 9px 10px; color: var(--ink); }
 input:focus, select:focus { outline: 3px solid #bbe2d8; border-color: var(--teal); }
@@ -52,7 +53,7 @@ input:focus, select:focus { outline: 3px solid #bbe2d8; border-color: var(--teal
 .toggle { min-height: 40px; border: 1px solid #b8c8c4; border-radius: 8px; background: #fff; padding: 0 13px; color: var(--muted); font-weight: 700; }
 .toggle.selected { border-color: var(--teal); background: var(--mint); color: var(--teal-dark); }
 .export-options { align-self: stretch; }
-.export-options label, .selection-actions label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .82rem; font-weight: 600; }
+.export-options label, .selection-actions label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .82rem; font-weight: 600; line-height: 1.3; }
 input[type="checkbox"] { width: 16px; min-height: 16px; height: 16px; padding: 0; accent-color: var(--teal); }
 .part-manager { grid-column: 1 / -1; display: grid; gap: 9px; font-size: .88rem; font-weight: 700; }
 .part-chips { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -105,6 +106,12 @@ code { border-radius: 4px; background: rgba(0,0,0,.17); padding: 2px 4px; }
 .site-footer nav { display: flex; gap: 18px; padding-top: 20px; border-top: 1px solid var(--line); }
 .site-footer a { color: var(--teal-dark); text-underline-offset: 3px; }
 .site-footer a:hover { color: var(--teal); }
+
+@media (max-width: 900px) {
+  .basics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .basics .wide, .part-manager { grid-column: 1 / -1; }
+  .export-options { align-self: start; }
+}
 
 @media (max-width: 720px) {
   .site-header-inner { width: min(100% - 24px, 680px); min-height: 80px; }
